@@ -1,0 +1,134 @@
+# Reusable workflow for Python data fetching dashboards
+# Usage in your dashboard repo:
+#
+# jobs:
+#   update:
+#     uses: kittycapital/shared-workflows/.github/workflows/python-fetch.yml@main
+#     with:
+#       script: fetch_data.py
+#     secrets: inherit
+
+name: Python Data Fetch
+
+on:
+  workflow_call:
+    inputs:
+      script:
+        description: 'Python script to run (e.g., fetch_data.py)'
+        required: true
+        type: string
+      python-version:
+        description: 'Python version'
+        required: false
+        default: '3.11'
+        type: string
+      requirements:
+        description: 'pip packages to install (space-separated)'
+        required: false
+        default: 'requests'
+        type: string
+      commit-message:
+        description: 'Commit message prefix'
+        required: false
+        default: 'Update data'
+        type: string
+      data-paths:
+        description: 'Files/folders to commit (space-separated)'
+        required: false
+        default: 'data/ index.html'
+        type: string
+      timezone:
+        description: 'Timezone for logging'
+        required: false
+        default: 'Asia/Seoul'
+        type: string
+
+jobs:
+  fetch-and-update:
+    runs-on: ubuntu-latest
+    env:
+      TZ: ${{ inputs.timezone }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ inputs.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+          cache: 'pip'
+          cache-dependency-path: '**/requirements.txt'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install ${{ inputs.requirements }} --break-system-packages 2>/dev/null || pip install ${{ inputs.requirements }}
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt --break-system-packages 2>/dev/null || pip install -r requirements.txt
+          fi
+
+      - name: Run fetch script
+        id: fetch
+        env:
+          # Common API keys - add yours to repo secrets
+          COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
+          MOLIT_API_KEY: ${{ secrets.MOLIT_API_KEY }}
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+          SERPAPI_KEY: ${{ secrets.SERPAPI_KEY }}
+        run: |
+          echo "🚀 Starting fetch at $(date '+%Y-%m-%d %H:%M:%S %Z')"
+          python ${{ inputs.script }} 2>&1 | tee fetch.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ Script failed with exit code $EXIT_CODE"
+            echo "fetch_status=failed" >> $GITHUB_OUTPUT
+            exit $EXIT_CODE
+          fi
+          
+          echo "✅ Fetch completed successfully"
+          echo "fetch_status=success" >> $GITHUB_OUTPUT
+
+      - name: Check for changes
+        id: changes
+        run: |
+          git add -A
+          if git diff --staged --quiet; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "📭 No changes detected"
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "📬 Changes detected:"
+            git diff --staged --stat
+          fi
+
+      - name: Commit and push
+        if: steps.changes.outputs.has_changes == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          TIMESTAMP=$(date '+%Y-%m-%d %H:%M %Z')
+          git commit -m "${{ inputs.commit-message }} ($TIMESTAMP)"
+          
+          # Retry push up to 3 times (in case of concurrent updates)
+          for i in 1 2 3; do
+            git push && break
+            echo "Push attempt $i failed, retrying..."
+            git pull --rebase
+            sleep 2
+          done
+          
+          echo "✅ Changes committed and pushed"
+
+      - name: Summary
+        run: |
+          echo "## 📊 Fetch Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Script:** \`${{ inputs.script }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status:** ${{ steps.fetch.outputs.fetch_status || 'success' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Changes:** ${{ steps.changes.outputs.has_changes }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Time:** $(date '+%Y-%m-%d %H:%M:%S %Z')" >> $GITHUB_STEP_SUMMARY
