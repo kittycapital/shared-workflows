@@ -1,0 +1,29 @@
+# Example: How to use the shared workflow in your dashboard repo
+# Save this as .github/workflows/update.yml in your dashboard repo
+
+name: Update Dashboard
+
+on:
+  schedule:
+    # Daily at 7 AM KST (22:00 UTC previous day)
+    - cron: '0 22 * * *'
+  workflow_dispatch:  # Manual trigger
+
+jobs:
+  update:
+    uses: kittycapital/shared-workflows/.github/workflows/python-fetch.yml@main
+    with:
+      # Required: your Python script name
+      script: fetch_data.py
+      
+      # Optional: pip packages (default: 'requests')
+      requirements: requests yfinance pandas
+      
+      # Optional: files to commit (default: 'data/ index.html')
+      data-paths: data/ index.html
+      
+      # Optional: commit message prefix (default: 'Update data')
+      commit-message: Update dashboard
+      
+    # Pass all your repo secrets to the workflow
+    secrets: inherit
